@@ -1,14 +1,46 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
 
 import requests
 from flask import Flask, jsonify, render_template, request
+from pymongo import MongoClient
+
+# from functools import lru_cache
+
 
 app = Flask(__name__)
-apikey = "apikey"
+apikey =  "your-api-key-here"
 
-@lru_cache(maxsize=1000)
+# MONGO DB
+MONGO_URI = "mongodb://root:example@localhost:27017/"
+client = MongoClient(MONGO_URI)
+db = client.movie_cache
+
+# Collections
+movies_collection = db.movies
+countries_collection = db.countries
+
+# Indexes
+movies_collection.create_index("imdbID", unique=True)
+countries_collection.create_index("name", unique=True)
+
+
+def get_movie_from_cache(imdbID):
+    return movies_collection.find_one({"imdbID": imdbID})
+
+
+def save_movie_to_cache(movie):
+    movies_collection.update_one({"imdbID": movie["imdbID"]}, {"$set": movie}, upsert=True)
+
+
+def get_country_from_cache(name):
+    return countries_collection.find_one({"name": name})
+
+
+def save_country_to_cache(name, flag):
+    countries_collection.update_one({"name": name}, {"$set": {"flag": flag}}, upsert=True)
+
+# @lru_cache(maxsize=1000)
 def searchfilms(search_text, page=1):
     url = f"https://www.omdbapi.com/?s={search_text}&page={page}&apikey={apikey}"
     response = requests.get(url)
@@ -18,25 +50,37 @@ def searchfilms(search_text, page=1):
         print("Failed to retrieve search results.")
         return None
 
-@lru_cache(maxsize=1000)
+# @lru_cache(maxsize=1000)
 def getmoviedetails(imdbID):
+    movie = get_movie_from_cache(imdbID)
+    if movie:
+        return movie
+    
     url = f"https://www.omdbapi.com/?i={imdbID}&apikey={apikey}"    
     response = requests.get(url)
     if response.status_code == 200:
-        return response.json()
+        data = response.json()
+        save_movie_to_cache(data)
+        return data
     else:
         print("Failed to retrieve search results.")
         return None
 
-@lru_cache(maxsize=1000)
+# @lru_cache(maxsize=1000)
 def get_country_flag(fullname):
-
+    country = get_country_from_cache(fullname)
+    if country:
+        return country["flag"]
+    
     url = f"https://restcountries.com/v3.1/name/{fullname}?fullText=true"
     response = requests.get(url)
     if response.status_code == 200:
         country_data = response.json()
         if country_data:
-            return country_data[0].get("flags", {}).get("svg", None)
+            flag = country_data[0].get("flags", {}).get("svg", None)
+            save_country_to_cache(fullname, flag)
+            return flag
+
     print(f"Failed to retrieve flag for country code: {fullname}")
     return None
 
